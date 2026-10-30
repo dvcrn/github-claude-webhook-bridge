@@ -2,6 +2,7 @@
 
 export interface Filters {
   ALLOWED_OWNERS: readonly string[];
+  ALLOWED_ACTORS: readonly string[];
   COMMENT_KEYWORDS: readonly string[];
   LABELS: readonly string[];
   ASSIGNEES: readonly string[];
@@ -129,18 +130,17 @@ function parsePayload(raw: Uint8Array): WebhookPayload | undefined {
 // Returns why a delivery is dropped, or undefined when it should reach the routine.
 export function skipReason(event: string, payload: WebhookPayload, f: Filters): string | undefined {
   if (!includesName(f.ALLOWED_OWNERS, payload.repository?.owner?.login)) return "owner not allowed";
-  if (includesName(f.IGNORED_SENDERS, payload.sender?.login)) return "ignored sender";
-  // The routine skips bots (including Dependabot) and fork PRs, so don't spend a run on them.
-  if (payload.sender?.type === "Bot") return "bot sender";
-  // A deleted fork leaves `head.repo` null, which also counts as a fork. issue_comment payloads
-  // carry no head repo, so comments on fork PRs still go through and the routine drops them.
-  const pr = payload.pull_request;
-  if (pr && pr.head?.repo?.full_name !== pr.base?.repo?.full_name) return "fork pull request";
+  const sender = payload.sender;
+  if (includesName(f.IGNORED_SENDERS, sender?.login)) return "ignored sender";
+  if (sender?.type === "Bot" || nameKey(sender?.login).endsWith("[bot]")) return "bot sender";
+  const isActor = (user?: User | null) => includesName(f.ALLOWED_ACTORS, user?.login, loginKey);
   const action = payload.action;
 
   switch (event) {
     case "issue_comment": {
       if (action !== "created" && action !== "edited") return `action ${action}`;
+      // On an edit the sender is the editor, so an allowed actor can't relay someone else's comment.
+      if (!isActor(sender) || !isActor(payload.comment?.user)) return "actor not allowed";
       const keywords = Array.isArray(f.COMMENT_KEYWORDS) ? f.COMMENT_KEYWORDS : [];
       const matched = keywords.filter((k) => mentions(payload.comment?.body ?? "", k));
       if (matched.length === 0) return "no keyword";
@@ -153,12 +153,12 @@ export function skipReason(event: string, payload: WebhookPayload, f: Filters): 
 
     case "issues":
     case "pull_request":
+      // Any author, forks included, gets an automatic review.
       if (event === "pull_request" && action === "opened") return undefined;
+      if (action !== "labeled" && action !== "assigned") return `action ${action}`;
+      if (!isActor(sender)) return "actor not allowed";
       if (action === "labeled") return includesName(f.LABELS, payload.label?.name) ? undefined : "label not watched";
-      if (action === "assigned") {
-        return includesName(f.ASSIGNEES, payload.assignee?.login) ? undefined : "assignee not watched";
-      }
-      return `action ${action}`;
+      return includesName(f.ASSIGNEES, payload.assignee?.login) ? undefined : "assignee not watched";
 
     default:
       return `event ${event}`;
@@ -208,10 +208,14 @@ export function slimPayload(delivery: string | null, p: WebhookPayload): object 
   };
 }
 
+const nameKey = (s: unknown) => String(s ?? "").toLowerCase();
+// Config entries may be written as GitHub mentions, so "@dvcrn" matches the login "dvcrn".
+const loginKey = (s: unknown) => nameKey(s).replace(/^@/, "");
+
 // A missing or non-array list matches nothing, so a broken ALLOWED_OWNERS drops everything.
-function includesName(list: readonly string[] | undefined, name: unknown): boolean {
-  const n = String(name ?? "").toLowerCase();
-  return n !== "" && Array.isArray(list) && list.some((x) => String(x).toLowerCase() === n);
+function includesName(list: readonly string[] | undefined, name: unknown, key = nameKey): boolean {
+  const n = key(name);
+  return n !== "" && Array.isArray(list) && list.some((x) => key(x) === n);
 }
 
 export function mentions(text: string, mention: string): boolean {

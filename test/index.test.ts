@@ -21,6 +21,10 @@ describe("verifySignature", () => {
     expect(await verifySignature(secret, bytes(body), null)).toBe(false);
     expect(await verifySignature(secret, bytes(body), "sha1=abc")).toBe(false);
   });
+  test("rejects everything when the secret is unset", async () => {
+    expect(await verifySignature("", bytes(body), good)).toBe(false);
+    expect(await verifySignature(undefined as unknown as string, bytes(body), good)).toBe(false);
+  });
 });
 
 describe("routineText", () => {
@@ -179,12 +183,19 @@ describe("skipReason", () => {
     });
     expect(skipReason("pull_request", pr("stranger/zot"), f)).toBe("fork pull request");
     expect(skipReason("pull_request", pr("dvcrn/zot"), f)).toBeUndefined();
+    const deletedFork = {
+      action: "opened",
+      sender,
+      pull_request: { head: { repo: null }, base: { repo: { full_name: "dvcrn/zot" } } },
+    };
+    expect(skipReason("pull_request", deletedFork, f)).toBe("fork pull request");
   });
   test("tolerates missing filter lists", () => {
-    const broken = { ...f, LABELS: undefined } as unknown as Filters;
+    const broken = { ...f, LABELS: undefined, COMMENT_KEYWORDS: undefined } as unknown as Filters;
     expect(skipReason("issues", { action: "labeled", label: { name: "boticorn-review" }, sender }, broken)).toBe(
       "label not watched",
     );
+    expect(skipReason("issue_comment", comment("@boticorn go"), broken)).toBe("no keyword");
   });
   test("pull_request opened is always forwarded; issues opened is not", () => {
     expect(skipReason("pull_request", { action: "opened", sender }, f)).toBeUndefined();

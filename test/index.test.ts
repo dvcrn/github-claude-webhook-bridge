@@ -168,7 +168,6 @@ describe("skipReason", () => {
     expect(skipReason("issue_comment", comment("@boticorn go", "created", "stranger"), f)).toBe("actor not allowed");
   });
   test("issue_comment: requires both the sender and the comment author to be allowed", () => {
-    // An allowed actor editing a stranger's comment, and a stranger editing an allowed actor's comment.
     const edit = (login: string, author: string) => ({
       ...comment("@boticorn go", "edited", login, author),
       changes: { body: { from: "go" } },

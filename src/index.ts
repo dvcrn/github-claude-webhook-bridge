@@ -153,7 +153,7 @@ export function skipReason(event: string, payload: WebhookPayload, f: Filters): 
 
     case "issues":
     case "pull_request":
-      // Any author, forks included, gets an automatic review.
+      // Opened PRs skip the actor check, so any non-bot author, forks included, is forwarded.
       if (event === "pull_request" && action === "opened") return undefined;
       if (action !== "labeled" && action !== "assigned") return `action ${action}`;
       if (!isActor(sender)) return "actor not allowed";

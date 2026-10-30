@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "github-claude-webhook-bridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "vars": {
+    // Only deliveries from repositories owned by these users or orgs are considered.
+    "ALLOWED_OWNERS": ["dvcrn", "digitalvibeshq", "microfnhq"],
+    // issue_comment: forwarded when a new comment (or an edit) adds one of these keywords.
+    "COMMENT_KEYWORDS": ["@boticorn"],
+    // issues / pull_request "labeled": forwarded when the added label is one of these.
+    "LABELS": ["boticorn-review"],
+    // issues / pull_request "assigned": forwarded when the new assignee is one of these logins.
+    "ASSIGNEES": ["boticorn"],
+    // Events sent by these logins are dropped so the bot can't trigger itself.
+    "IGNORED_SENDERS": ["boticorn", "boticorn[bot]"]
+  },
+  // pull_request "opened" is always forwarded.
+  // Secrets (set with `wrangler secret put`):
+  //   GITHUB_WEBHOOK_SECRET, ROUTINE_TOKEN, ROUTINE_FIRE_URL
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "destinations": ["new-relic-logs", "axiom-logs"],
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    }
+  }
+}

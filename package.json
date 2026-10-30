@@ -1,0 +1,17 @@
+{
+  "name": "github-claude-webhook-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.156.0"
+  }
+}

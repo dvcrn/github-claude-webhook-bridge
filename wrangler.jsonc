@@ -7,6 +7,8 @@
   "vars": {
     // Only deliveries from repositories owned by these users or orgs are considered.
     "ALLOWED_OWNERS": ["dvcrn", "digitalvibeshq", "microfnhq"],
+    // Logins allowed to trigger the routine with a comment, label or assignment. A leading "@" is optional.
+    "ALLOWED_ACTORS": ["dvcrn"],
     // issue_comment: forwarded when a new comment (or an edit) adds one of these keywords.
     "COMMENT_KEYWORDS": ["@boticorn"],
     // issues / pull_request "labeled": forwarded when the added label is one of these.
@@ -16,7 +18,7 @@
     // Events sent by these logins are dropped so the bot can't trigger itself.
     "IGNORED_SENDERS": ["boticorn", "boticorn[bot]"]
   },
-  // pull_request "opened" is always forwarded.
+  // pull_request "opened" is forwarded for any non-bot author, forks included.
   // Secrets (set with `wrangler secret put`):
   //   GITHUB_WEBHOOK_SECRET, ROUTINE_TOKEN, ROUTINE_FIRE_URL
   "observability": {

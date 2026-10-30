@@ -141,15 +141,17 @@ describe("mentions", () => {
 describe("skipReason", () => {
   const f: Filters = {
     ALLOWED_OWNERS: ["dvcrn", "digitalvibeshq", "microfnhq"],
+    ALLOWED_ACTORS: ["dvcrn"],
     COMMENT_KEYWORDS: ["@boticorn"],
     LABELS: ["boticorn-review"],
     ASSIGNEES: ["boticorn"],
     IGNORED_SENDERS: ["boticorn", "boticorn[bot]"],
   };
-  const sender = { login: "david" };
-  const comment = (body: string, action = "created", login = "david") => ({
+  const sender = { login: "dvcrn" };
+  const stranger = { login: "stranger" };
+  const comment = (body: string, action = "created", login = "dvcrn", author = login) => ({
     action,
-    comment: { body },
+    comment: { body, user: { login: author } },
     sender: { login },
   });
 
@@ -159,36 +161,63 @@ describe("skipReason", () => {
     expect(skipReason("pull_request", pr("someone-else"), f)).toBe("owner not allowed");
     expect(skipReason("pull_request", pr(), f)).toBe("owner not allowed");
   });
-  test("issue_comment: forwards keyword comments only", () => {
+  test("issue_comment: forwards keyword comments from allowed actors only", () => {
     expect(skipReason("issue_comment", comment("@boticorn go"), f)).toBeUndefined();
     expect(skipReason("issue_comment", comment("lgtm"), f)).toBe("no keyword");
     expect(skipReason("issue_comment", comment("@boticorn", "deleted"), f)).toBe("action deleted");
+    expect(skipReason("issue_comment", comment("@boticorn go", "created", "stranger"), f)).toBe("actor not allowed");
+  });
+  test("issue_comment: requires both the sender and the comment author to be allowed", () => {
+    const edit = (login: string, author: string) => ({
+      ...comment("@boticorn go", "edited", login, author),
+      changes: { body: { from: "go" } },
+    });
+    expect(skipReason("issue_comment", edit("dvcrn", "dvcrn"), f)).toBeUndefined();
+    expect(skipReason("issue_comment", edit("dvcrn", "stranger"), f)).toBe("actor not allowed");
+    expect(skipReason("issue_comment", edit("stranger", "dvcrn"), f)).toBe("actor not allowed");
+    expect(skipReason("issue_comment", { action: "created", comment: { body: "@boticorn" }, sender }, f)).toBe(
+      "actor not allowed",
+    );
   });
   test("issue_comment: forwards edits only when they add a keyword", () => {
     const edit = (from: string) => ({ ...comment("@boticorn go", "edited"), changes: { body: { from } } });
     expect(skipReason("issue_comment", edit("go"), f)).toBeUndefined();
     expect(skipReason("issue_comment", edit("@boticorn gp"), f)).toBe("keyword already present");
   });
+  test("matches actors case-insensitively, with or without a leading @", () => {
+    for (const actors of [["dvcrn"], ["@dvcrn"], ["DVCRN"], ["@DvCrN"]]) {
+      const g = { ...f, ALLOWED_ACTORS: actors };
+      expect(skipReason("issue_comment", comment("@boticorn go", "created", "DvCrn"), g)).toBeUndefined();
+      expect(
+        skipReason("issues", { action: "labeled", label: { name: "boticorn-review" }, sender }, g),
+      ).toBeUndefined();
+      expect(skipReason("issue_comment", comment("@boticorn go", "created", "dvcrn2"), g)).toBe("actor not allowed");
+    }
+  });
   test("drops ignored senders but not similar names", () => {
     expect(skipReason("issue_comment", comment("@boticorn", "created", "boticorn[bot]"), f)).toBe("ignored sender");
-    expect(skipReason("issue_comment", comment("@boticorn", "created", "boticornfan"), f)).toBeUndefined();
+    expect(skipReason("pull_request", { action: "opened", sender: { login: "boticornfan" } }, f)).toBeUndefined();
   });
-  test("drops bots and fork pull requests", () => {
-    const bot = { login: "dependabot[bot]", type: "Bot" };
-    expect(skipReason("pull_request", { action: "opened", sender: bot }, f)).toBe("bot sender");
-    const pr = (head: string) => ({
+  test("drops bot senders by type or [bot] suffix", () => {
+    const opened = (s: object) => ({ action: "opened", sender: s });
+    expect(skipReason("pull_request", opened({ login: "dependabot[bot]", type: "Bot" }), f)).toBe("bot sender");
+    expect(skipReason("pull_request", opened({ login: "renovate[BOT]" }), f)).toBe("bot sender");
+    expect(skipReason("pull_request", opened({ login: "some-app", type: "Bot" }), f)).toBe("bot sender");
+    // A bot is dropped even when its login is listed as an actor.
+    const g = { ...f, ALLOWED_ACTORS: ["helper[bot]"] };
+    expect(skipReason("issue_comment", comment("@boticorn go", "created", "helper[bot]"), g)).toBe("bot sender");
+  });
+  test("pull_request opened is forwarded for any author, forks included; issues opened is not", () => {
+    expect(skipReason("pull_request", { action: "opened", sender }, f)).toBeUndefined();
+    expect(skipReason("pull_request", { action: "opened", sender: stranger }, f)).toBeUndefined();
+    const fork = (head: { full_name: string } | null) => ({
       action: "opened",
-      sender,
-      pull_request: { head: { repo: { full_name: head } }, base: { repo: { full_name: "dvcrn/zot" } } },
+      sender: stranger,
+      pull_request: { head: { repo: head }, base: { repo: { full_name: "dvcrn/zot" } } },
     });
-    expect(skipReason("pull_request", pr("stranger/zot"), f)).toBe("fork pull request");
-    expect(skipReason("pull_request", pr("dvcrn/zot"), f)).toBeUndefined();
-    const deletedFork = {
-      action: "opened",
-      sender,
-      pull_request: { head: { repo: null }, base: { repo: { full_name: "dvcrn/zot" } } },
-    };
-    expect(skipReason("pull_request", deletedFork, f)).toBe("fork pull request");
+    expect(skipReason("pull_request", fork({ full_name: "stranger/zot" }), f)).toBeUndefined();
+    expect(skipReason("pull_request", fork(null), f)).toBeUndefined();
+    expect(skipReason("issues", { action: "opened", sender }, f)).toBe("action opened");
   });
   test("tolerates missing filter lists", () => {
     const broken = { ...f, LABELS: undefined, COMMENT_KEYWORDS: undefined } as unknown as Filters;
@@ -196,22 +225,26 @@ describe("skipReason", () => {
       "label not watched",
     );
     expect(skipReason("issue_comment", comment("@boticorn go"), broken)).toBe("no keyword");
+    const noActors = { ...f, ALLOWED_ACTORS: undefined } as unknown as Filters;
+    expect(skipReason("issue_comment", comment("@boticorn go"), noActors)).toBe("actor not allowed");
   });
-  test("pull_request opened is always forwarded; issues opened is not", () => {
-    expect(skipReason("pull_request", { action: "opened", sender }, f)).toBeUndefined();
-    expect(skipReason("issues", { action: "opened", sender }, f)).toBe("action opened");
-  });
-  test("labeled: forwards watched labels on issues and PRs", () => {
+  test("labeled: forwards watched labels on issues and PRs from allowed actors", () => {
     for (const event of ["issues", "pull_request"]) {
       expect(skipReason(event, { action: "labeled", label: { name: "Boticorn-Review" }, sender }, f)).toBeUndefined();
       expect(skipReason(event, { action: "labeled", label: { name: "bug" }, sender }, f)).toBe("label not watched");
+      expect(skipReason(event, { action: "labeled", label: { name: "boticorn-review" }, sender: stranger }, f)).toBe(
+        "actor not allowed",
+      );
     }
   });
-  test("assigned: forwards watched assignees on issues and PRs", () => {
+  test("assigned: forwards watched assignees on issues and PRs from allowed actors", () => {
     for (const event of ["issues", "pull_request"]) {
       expect(skipReason(event, { action: "assigned", assignee: { login: "boticorn" }, sender }, f)).toBeUndefined();
-      expect(skipReason(event, { action: "assigned", assignee: { login: "david" }, sender }, f)).toBe(
+      expect(skipReason(event, { action: "assigned", assignee: { login: "dvcrn" }, sender }, f)).toBe(
         "assignee not watched",
+      );
+      expect(skipReason(event, { action: "assigned", assignee: { login: "boticorn" }, sender: stranger }, f)).toBe(
+        "actor not allowed",
       );
     }
   });
@@ -220,6 +253,7 @@ describe("skipReason", () => {
     expect(skipReason("issues", { action: "unlabeled", label: { name: "boticorn-review" }, sender }, f)).toBe(
       "action unlabeled",
     );
+    expect(skipReason("pull_request_review", { action: "submitted", sender }, f)).toBe("event pull_request_review");
     expect(skipReason("ping", { sender }, f)).toBe("event ping");
   });
 });

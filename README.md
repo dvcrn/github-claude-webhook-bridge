@@ -51,15 +51,27 @@ Use `repos/OWNER/REPO/hooks` for a single repository.
 
 These lists are what the Worker actually forwards. Anything else is dropped.
 
-| Var                | Forwards when                                                    |
-| ------------------ | ---------------------------------------------------------------- |
-| `ALLOWED_OWNERS`   | The repository owner is in the list                              |
-| `COMMENT_KEYWORDS` | An `issue_comment` is created with that word, or an edit adds it |
-| `LABELS`           | An `issues` or `pull_request` event adds that label              |
-| `ASSIGNEES`        | An `issues` or `pull_request` event assigns that login           |
-| `IGNORED_SENDERS`  | Never. Stops the bot from triggering itself                      |
+| Var                | Forwards when                                                     |
+| ------------------ | ----------------------------------------------------------------- |
+| `ALLOWED_OWNERS`   | The repository owner is in the list                               |
+| `ALLOWED_ACTORS`   | The sender (and, for comments, the comment author) is in the list |
+| `COMMENT_KEYWORDS` | An `issue_comment` is created with that word, or an edit adds it  |
+| `LABELS`           | An `issues` or `pull_request` event adds that label               |
+| `ASSIGNEES`        | An `issues` or `pull_request` event assigns that login            |
+| `IGNORED_SENDERS`  | Never. Stops the bot from triggering itself                       |
 
-`pull_request` `opened` is always forwarded, including drafts. Bots are dropped. Pull requests opened from forks are dropped; comments on those PRs are not.
+`wrangler.jsonc` sets `ALLOWED_OWNERS` to `dvcrn`, `digitalvibeshq` and `microfnhq`, and `ALLOWED_ACTORS` to `dvcrn`. A missing list matches nothing. Logins match case-insensitively, and `ALLOWED_ACTORS` entries may start with `@`.
+
+The checks run in this order:
+
+1. Drop repositories whose owner isn't in `ALLOWED_OWNERS`.
+2. Drop senders in `IGNORED_SENDERS` and bots (`sender.type` is `Bot`, or the login ends in `[bot]`).
+3. `issue_comment` `created` or `edited`: forward when both the sender and the comment author are in `ALLOWED_ACTORS` and the body mentions a `COMMENT_KEYWORDS` entry. An edit forwards only if it adds the keyword.
+4. `issues` or `pull_request` `labeled` / `assigned`: forward when the sender is in `ALLOWED_ACTORS` and the label or assignee is watched.
+5. `pull_request` `opened`: forward for any author, including drafts and forks.
+6. Drop everything else.
+
+Filtered deliveries get a `202` with `skipped: <reason>` and a `skipped` log line, so they show as successful in Recent Deliveries.
 
 Deploy after changing vars or secrets: `bun run deploy`.
 

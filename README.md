@@ -2,66 +2,76 @@
 
 A Cloudflare Worker that receives GitHub webhooks and starts a Claude Code routine.
 
-GitHub can't call a routine's fire endpoint directly: the endpoint needs an `Authorization: Bearer` header and a `{"text": "..."}` body. This Worker verifies the webhook signature, drops events the routine doesn't act on, and posts the rest to the routine.
+GitHub can't call a Claude routine's fire endpoint directly: the endpoint needs an `Authorization: Bearer` header and a `{"text": "..."}` body. This Worker verifies the webhook signature, drops events the routine doesn't act on, and posts the rest to the routine.
 
-## Forwarded events
+## Setup
 
-| Event | Action | Condition |
-|---|---|---|
-| `issue_comment` | `created` | Comment contains a word from `COMMENT_KEYWORDS` |
-| `issue_comment` | `edited` | The edit adds a keyword the old text didn't have |
-| `pull_request` | `opened` | Always, including drafts |
-| `issues`, `pull_request` | `labeled` | Added label is in `LABELS` |
-| `issues`, `pull_request` | `assigned` | New assignee is in `ASSIGNEES` |
+### Create a Claude routine
 
-Everything else is dropped. Every event must also have a valid `X-Hub-Signature-256`, come from a repository owned by someone in `ALLOWED_OWNERS`, and not be sent by a bot or anyone in `IGNORED_SENDERS`. `pull_request` events for PRs opened from forks are dropped (comments on those PRs are not). Name and keyword matching is case-insensitive, and keywords must stand alone (`@boticorn-dev` and `@boticorn/cli` don't match).
+Create one at [claude.ai/code/routines](https://claude.ai/code/routines). The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with `wrangler.jsonc`.
 
-The routine receives `X-GitHub-Event: <event>` followed by a trimmed JSON object: repository, sender, the added label or assignee, the issue or PR (number, title, URL, state, author, labels, assignees, body, and branches for PRs), and the triggering comment with its previous text on edits. GitHub's API URLs, node IDs, avatars, reactions, and repository metadata are left out.
+Edit the routine and add an API trigger. Copy the Fire URL. That is `ROUTINE_FIRE_URL`, shaped like `https://api.anthropic.com/v1/claude_code/routines/<trigger id>/fire`.
 
-## Responses
+Generate a token and copy it, that is `ROUTINE_TOKEN`.
 
-| Status | Meaning |
-|---|---|
-| `200` | Forwarded; the body is the routine's response, including the session URL |
-| `202` | Dropped by a filter; the body gives the reason |
-| `400` | Missing `X-GitHub-Event` or a body that isn't JSON |
-| `401` | Signature missing or invalid |
-| `502` | The routine endpoint returned an error; redeliver from GitHub once fixed |
-
-GitHub shows these under the webhook's **Recent Deliveries**.
-
-## Configuration
-
-The filter lists are `vars` in `wrangler.jsonc`. The routine's prompt has its own copies of `COMMENT_KEYWORDS`, `LABELS`, and `ASSIGNEES`; keep both in sync.
-
-Secrets are kept in a local, untracked `fnox.toml` and uploaded as Worker secrets:
-
-| Secret | Value |
-|---|---|
-| `GITHUB_WEBHOOK_SECRET` | The secret set on the GitHub webhook |
-| `ROUTINE_TOKEN` | The routine's bearer token |
-| `ROUTINE_FIRE_URL` | `https://api.anthropic.com/v1/claude_code/routines/<trigger id>/fire` |
+Pick a webhook secret yourself, then upload all three values as Worker secrets:
 
 ```sh
-for k in GITHUB_WEBHOOK_SECRET ROUTINE_TOKEN ROUTINE_FIRE_URL; do
-  printf '%s' "$(fnox get "$k")" | bunx wrangler secret put "$k"
-done
+bunx wrangler secret put ROUTINE_FIRE_URL
+bunx wrangler secret put ROUTINE_TOKEN
+bunx wrangler secret put GITHUB_WEBHOOK_SECRET
 ```
 
-Logs go to New Relic and Axiom through Workers observability destinations. Forwarded, skipped, and rejected deliveries each log one JSON line (`forwarded`, `skipped` with a reason, `rejected`).
+### Add GitHub webhooks
 
-## GitHub webhook
+On each repo, or once per org in `ALLOWED_OWNERS`, add a webhook:
 
-Set the payload URL to `https://github-claude-webhook-bridge.dsh.workers.dev`, the content type to `application/json`, and the secret to `GITHUB_WEBHOOK_SECRET`. Subscribe to **Issue comments**, **Issues**, and **Pull requests**.
+- Payload URL: `https://github-claude-webhook-bridge.xxxxx.workers.dev`
+- Content type: `application/json`
+- Secret: the same value as `GITHUB_WEBHOOK_SECRET`
+
+Subscribe only to these events:
+
+- [`issue_comment`](https://docs.github.com/en/webhooks/webhook-events-and-payloads#issue_comment)
+- [`issues`](https://docs.github.com/en/webhooks/webhook-events-and-payloads#issues)
+- [`pull_request`](https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request)
+
+```sh
+gh api --method POST orgs/ORG/hooks \
+  -f name=web -F active=true \
+  -f config[url]='https://github-claude-webhook-bridge.xxxxx.workers.dev' \
+  -f config[content_type]=json \
+  -f config[secret]="$GITHUB_WEBHOOK_SECRET" \
+  -f events[]=issue_comment -f events[]=issues -f events[]=pull_request
+```
+
+Use `repos/OWNER/REPO/hooks` for a single repository.
+
+### Set `vars` in `wrangler.jsonc`
+
+These lists are what the Worker actually forwards. Anything else is dropped.
+
+| Var                | Forwards when                                                    |
+| ------------------ | ---------------------------------------------------------------- |
+| `ALLOWED_OWNERS`   | The repository owner is in the list                              |
+| `COMMENT_KEYWORDS` | An `issue_comment` is created with that word, or an edit adds it |
+| `LABELS`           | An `issues` or `pull_request` event adds that label              |
+| `ASSIGNEES`        | An `issues` or `pull_request` event assigns that login           |
+| `IGNORED_SENDERS`  | Never. Stops the bot from triggering itself                      |
+
+`pull_request` `opened` is always forwarded, including drafts. Bots are dropped. Pull requests opened from forks are dropped; comments on those PRs are not.
+
+Deploy after changing vars or secrets: `bun run deploy`.
 
 ## Development
 
 ```sh
 bun install
-bun test             # unit tests
+bun test
 bun run typecheck
-bun run types        # regenerate worker-configuration.d.ts after editing wrangler.jsonc
-bun run deploy
+bun run dev   # reads .dev.vars; copy .dev.vars.example
 ```
 
-`bun run dev` reads local secrets from `.dev.vars`; copy `.dev.vars.example` to start.
+## License
+
+MIT

@@ -20,7 +20,7 @@
   },
   // pull_request "opened" is forwarded for any non-bot author, forks included.
   // Secrets (set with `wrangler secret put`):
-  //   GITHUB_WEBHOOK_SECRET, ROUTINE_TOKEN, ROUTINE_FIRE_URL
+  //   GITHUB_WEBHOOK_SECRET, ROUTINES (JSON route name -> {url, token}, see README)
   "observability": {
     "logs": {
       "enabled": true,

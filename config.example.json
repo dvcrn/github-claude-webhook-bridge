@@ -1,0 +1,10 @@
+{
+  "foo": {
+    "url": "https://api.anthropic.com/v1/claude_code/routines/<trigger id 1>/fire",
+    "token": "<routine 1 token>"
+  },
+  "bar": {
+    "url": "https://api.anthropic.com/v1/claude_code/routines/<trigger id 2>/fire",
+    "token": "<routine 2 token>"
+  }
+}

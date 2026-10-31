@@ -1,5 +1,12 @@
-import { describe, expect, test } from "bun:test";
-import { type Filters, mentions, routineText, skipReason as rawSkipReason, verifySignature } from "../src/index";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import worker, {
+  type Filters,
+  mentions,
+  parseRoutines,
+  routineText,
+  skipReason as rawSkipReason,
+  verifySignature,
+} from "../src/index";
 
 // Most cases are about event filtering, so default to a repository from an allowed owner.
 const repository = { owner: { login: "dvcrn" } };
@@ -255,5 +262,81 @@ describe("skipReason", () => {
     );
     expect(skipReason("pull_request_review", { action: "submitted", sender }, f)).toBe("event pull_request_review");
     expect(skipReason("ping", { sender }, f)).toBe("event ping");
+  });
+});
+
+describe("parseRoutines", () => {
+  test("accepts a map of route name to url and token", () => {
+    const raw = JSON.stringify({ foo: { url: "https://a/fire", token: "t1" }, bar: { url: "https://b/fire", token: "t2" } });
+    expect(parseRoutines(raw)).toEqual({ foo: { url: "https://a/fire", token: "t1" }, bar: { url: "https://b/fire", token: "t2" } });
+  });
+  test("rejects malformed JSON and shapes", () => {
+    expect(parseRoutines(undefined)).toBeUndefined();
+    expect(parseRoutines("{")).toBeUndefined();
+    expect(parseRoutines("[]")).toBeUndefined();
+    expect(parseRoutines('"foo"')).toBeUndefined();
+    expect(parseRoutines(JSON.stringify({ foo: { url: "https://a/fire" } }))).toBeUndefined();
+    expect(parseRoutines(JSON.stringify({ foo: { url: 1, token: "t" } }))).toBeUndefined();
+    expect(parseRoutines(JSON.stringify({ foo: null }))).toBeUndefined();
+  });
+});
+
+describe("fetch", () => {
+  const secret = "s3cret";
+  const env = {
+    ALLOWED_OWNERS: ["dvcrn"],
+    COMMENT_KEYWORDS: [],
+    LABELS: [],
+    ASSIGNEES: [],
+    IGNORED_SENDERS: [],
+    GITHUB_WEBHOOK_SECRET: secret,
+    ROUTINES: JSON.stringify({ foo: { url: "https://a/fire", token: "t1" }, bar: { url: "https://b/fire", token: "t2" } }),
+  } as unknown as Env;
+  const body = JSON.stringify({
+    action: "opened",
+    repository: { full_name: "dvcrn/zot", owner: { login: "dvcrn" } },
+    sender: { login: "david" },
+    pull_request: { number: 1, head: { repo: { full_name: "dvcrn/zot" } }, base: { repo: { full_name: "dvcrn/zot" } } },
+  });
+
+  async function deliver(path: string, e: Env = env): Promise<Response> {
+    const key = await crypto.subtle.importKey("raw", bytes(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = Buffer.from(await crypto.subtle.sign("HMAC", key, bytes(body))).toString("hex");
+    const req = new Request(`https://bridge.test${path}`, {
+      method: "POST",
+      headers: { "X-GitHub-Event": "pull_request", "X-Hub-Signature-256": `sha256=${sig}` },
+      body,
+    });
+    return worker.fetch(req, e);
+  }
+
+  const realFetch = globalThis.fetch;
+  const fetchMock = mock(async (_url: string | URL | Request, _init?: RequestInit) => new Response("ok"));
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  afterEach(() => fetchMock.mockClear());
+  afterAll(() => (globalThis.fetch = realFetch));
+
+  test("forwards each route to its own routine and token", async () => {
+    for (const [route, url, token] of [
+      ["foo", "https://a/fire", "t1"],
+      ["bar", "https://b/fire", "t2"],
+    ]) {
+      fetchMock.mockClear();
+      expect((await deliver(`/webhook/${route}`)).status).toBe(200);
+      const [calledUrl, init] = fetchMock.mock.calls[0]!;
+      expect(calledUrl).toBe(url);
+      expect((init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${token}`);
+    }
+  });
+  test("404s unknown paths and route names without forwarding", async () => {
+    expect((await deliver("/")).status).toBe(404);
+    expect((await deliver("/webhook/baz")).status).toBe(404);
+    expect((await deliver("/webhook/toString")).status).toBe(404);
+    expect((await deliver("/webhook/foo/extra")).status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  test("500s when ROUTINES is malformed", async () => {
+    expect((await deliver("/webhook/foo", { ...env, ROUTINES: "nope" })).status).toBe(500);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

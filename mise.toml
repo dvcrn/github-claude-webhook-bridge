@@ -1,0 +1,16 @@
+[tasks.test]
+run = "bun test"
+
+[tasks.typecheck]
+run = "bun run typecheck"
+
+[tasks.deploy]
+run = "bun run deploy"
+
+[tasks."config:push"]
+description = "Upload config.json to the Worker as the ROUTINES secret"
+run = "jq -c . config.json | bunx wrangler secret put ROUTINES"
+
+[tasks."secrets:push"]
+description = "Upload GITHUB_WEBHOOK_SECRET from fnox to the Worker"
+run = "fnox get GITHUB_WEBHOOK_SECRET | bunx wrangler secret put GITHUB_WEBHOOK_SECRET"

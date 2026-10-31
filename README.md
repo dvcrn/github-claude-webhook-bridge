@@ -6,27 +6,39 @@ GitHub can't call a Claude routine's fire endpoint directly: the endpoint needs 
 
 ## Setup
 
-### Create a Claude routine
+### Create Claude routines
 
-Create one at [claude.ai/code/routines](https://claude.ai/code/routines). The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with `wrangler.jsonc`.
+Create one at [claude.ai/code/routines](https://claude.ai/code/routines) for each webhook route you want. The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with `wrangler.jsonc`.
 
-Edit the routine and add an API trigger. Copy the Fire URL. That is `ROUTINE_FIRE_URL`, shaped like `https://api.anthropic.com/v1/claude_code/routines/<trigger id>/fire`.
+Edit each routine and add an API trigger. Copy the Fire URL, shaped like `https://api.anthropic.com/v1/claude_code/routines/<trigger id>/fire`, and generate a token.
 
-Generate a token and copy it, that is `ROUTINE_TOKEN`.
-
-Pick a webhook secret yourself, then upload all three values as Worker secrets:
+Put them in `config.json`, which maps route name to routine. `/webhook/<name>` forwards to that routine. Start from the example; `config.json` is gitignored:
 
 ```sh
-bunx wrangler secret put ROUTINE_FIRE_URL
-bunx wrangler secret put ROUTINE_TOKEN
+cp config.example.json config.json
+```
+
+```json
+{
+  "foo": { "url": "https://api.anthropic.com/v1/claude_code/routines/<trigger id 1>/fire", "token": "..." },
+  "bar": { "url": "https://api.anthropic.com/v1/claude_code/routines/<trigger id 2>/fire", "token": "..." }
+}
+```
+
+Route names may contain letters, digits, `-` and `_`. Upload it as the `ROUTINES` Worker secret, then pick a webhook secret yourself and upload that too:
+
+```sh
+mise run config:push
 bunx wrangler secret put GITHUB_WEBHOOK_SECRET
 ```
+
+Run `mise run config:push` again after editing `config.json`. With fnox, `mise run secrets:push` uploads `GITHUB_WEBHOOK_SECRET` from `fnox.toml`.
 
 ### Add GitHub webhooks
 
 On each repo, or once per org in `ALLOWED_OWNERS`, add a webhook:
 
-- Payload URL: `https://github-claude-webhook-bridge.xxxxx.workers.dev`
+- Payload URL: `https://github-claude-webhook-bridge.xxxxx.workers.dev/webhook/<name>`
 - Content type: `application/json`
 - Secret: the same value as `GITHUB_WEBHOOK_SECRET`
 
@@ -39,7 +51,7 @@ Subscribe only to these events:
 ```sh
 gh api --method POST orgs/ORG/hooks \
   -f name=web -F active=true \
-  -f config[url]='https://github-claude-webhook-bridge.xxxxx.workers.dev' \
+  -f config[url]='https://github-claude-webhook-bridge.xxxxx.workers.dev/webhook/foo' \
   -f config[content_type]=json \
   -f config[secret]="$GITHUB_WEBHOOK_SECRET" \
   -f events[]=issue_comment -f events[]=issues -f events[]=pull_request
@@ -49,7 +61,7 @@ Use `repos/OWNER/REPO/hooks` for a single repository.
 
 ### Set `vars` in `wrangler.jsonc`
 
-These lists are what the Worker actually forwards. Anything else is dropped.
+These lists are what the Worker actually forwards, on every route. Anything else is dropped.
 
 | Var                | Forwards when                                                     |
 | ------------------ | ----------------------------------------------------------------- |

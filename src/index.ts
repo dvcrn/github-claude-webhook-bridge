@@ -78,6 +78,16 @@ export default {
       return new Response("method not allowed", { status: 405, headers: { Allow: "POST" } });
     }
 
+    const route = new URL(request.url).pathname.match(/^\/webhook\/([A-Za-z0-9_-]+)$/)?.[1];
+    if (!route) return new Response("not found", { status: 404 });
+    const routines = parseRoutines(env.ROUTINES);
+    if (!routines) {
+      log("config_invalid", { route });
+      return new Response("ROUTINES secret is invalid", { status: 500 });
+    }
+    const routine = Object.hasOwn(routines, route) ? routines[route] : undefined;
+    if (!routine) return new Response("not found", { status: 404 });
+
     const event = request.headers.get("X-GitHub-Event");
     const delivery = request.headers.get("X-GitHub-Delivery");
     const signature = request.headers.get("X-Hub-Signature-256");
@@ -85,7 +95,7 @@ export default {
     const raw = new Uint8Array(await request.arrayBuffer());
 
     if (!(await verifySignature(env.GITHUB_WEBHOOK_SECRET, raw, signature))) {
-      log("rejected", { event, delivery });
+      log("rejected", { route, event, delivery });
       return new Response("invalid signature", { status: 401 });
     }
     if (!event) return new Response("missing X-GitHub-Event", { status: 400 });
@@ -95,28 +105,49 @@ export default {
 
     const skip = skipReason(event, payload, env);
     if (skip) {
-      log("skipped", { event, delivery, action: payload.action, reason: skip });
+      log("skipped", { route, event, delivery, action: payload.action, reason: skip });
       return new Response(`skipped: ${skip}`, { status: 202 });
     }
 
     try {
-      const res = await fetch(env.ROUTINE_FIRE_URL, {
+      const res = await fetch(routine.url, {
         method: "POST",
-        headers: { Authorization: `Bearer ${env.ROUTINE_TOKEN}`, ...ROUTINE_HEADERS },
+        headers: { Authorization: `Bearer ${routine.token}`, ...ROUTINE_HEADERS },
         body: JSON.stringify({ text: routineText(event, delivery, payload) }),
         signal: AbortSignal.timeout(ROUTINE_TIMEOUT_MS),
       });
       const detail = await res.text();
-      log("forwarded", { event, delivery, action: payload.action, status: res.status });
+      log("forwarded", { route, event, delivery, action: payload.action, status: res.status });
 
       // A non-2xx reply makes the failure visible in GitHub's Recent Deliveries and allows redelivery.
       return new Response(detail, { status: res.ok ? 200 : 502 });
     } catch (err) {
-      log("forward_failed", { event, delivery, action: payload.action, error: String(err) });
+      log("forward_failed", { route, event, delivery, action: payload.action, error: String(err) });
       return new Response("routine request failed", { status: 502 });
     }
   },
 } satisfies ExportedHandler<Env>;
+
+// A Claude routine's API trigger.
+export interface Routine {
+  url: string;
+  token: string;
+}
+
+// Parses the ROUTINES secret: a JSON object mapping route name to routine. Undefined when malformed.
+export function parseRoutines(raw: string | undefined): Record<string, Routine> | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw ?? "");
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  for (const r of Object.values(value)) {
+    if (typeof r?.url !== "string" || typeof r?.token !== "string") return undefined;
+  }
+  return value as Record<string, Routine>;
+}
 
 function parsePayload(raw: Uint8Array): WebhookPayload | undefined {
   try {

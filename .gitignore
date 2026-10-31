@@ -6,6 +6,7 @@ node_modules/
 dist/
 
 # Local secrets
+config.json
 fnox.toml
 fnox.*.toml
 .dev.vars*

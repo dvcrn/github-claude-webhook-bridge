@@ -5,7 +5,7 @@ interface __BaseEnv_Env {
 	ALLOWED_OWNERS: ["dvcrn","digitalvibeshq","microfnhq"];
 	ALLOWED_ACTORS: ["dvcrn"];
 	COMMENT_KEYWORDS: ["@boticorn"];
-	LABELS: ["boticorn-review"];
+	LABELS: ["reviewicorn"];
 	ASSIGNEES: ["boticorn"];
 	IGNORED_SENDERS: ["boticorn","boticorn[bot]"];
 	GITHUB_WEBHOOK_SECRET: string;

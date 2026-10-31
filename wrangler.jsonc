@@ -12,7 +12,7 @@
     // issue_comment: forwarded when a new comment (or an edit) adds one of these keywords.
     "COMMENT_KEYWORDS": ["@boticorn"],
     // issues / pull_request "labeled": forwarded when the added label is one of these.
-    "LABELS": ["boticorn-review"],
+    "LABELS": ["reviewicorn"],
     // issues / pull_request "assigned": forwarded when the new assignee is one of these logins.
     "ASSIGNEES": ["boticorn"],
     // Events sent by these logins are dropped so the bot can't trigger itself.

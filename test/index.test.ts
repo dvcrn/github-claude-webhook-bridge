@@ -3,6 +3,7 @@ import worker, {
   type Filters,
   mentions,
   parseRoutines,
+  routeFilters,
   routineText,
   skipReason as rawSkipReason,
   verifySignature,
@@ -281,13 +282,52 @@ describe("parseRoutines", () => {
   });
 });
 
+describe("routeFilters", () => {
+  const env = {
+    ALLOWED_OWNERS: ["dvcrn"],
+    ALLOWED_ACTORS: ["dvcrn"],
+    IGNORED_SENDERS: ["boticorn"],
+    ROUTE_FILTERS: {
+      boticorn: { COMMENT_KEYWORDS: ["@boticorn"], ASSIGNEES: ["boticorn"] },
+      reviewicorn: { COMMENT_KEYWORDS: ["@reviewicorn"], LABELS: ["reviewicorn"] },
+    },
+  };
+  const none = { COMMENT_KEYWORDS: [], LABELS: [], ASSIGNEES: [] };
+
+  test("keeps the global gates and takes triggers from the route only", () => {
+    expect(routeFilters(env, "reviewicorn")).toMatchObject({
+      ALLOWED_OWNERS: ["dvcrn"],
+      ALLOWED_ACTORS: ["dvcrn"],
+      IGNORED_SENDERS: ["boticorn"],
+      COMMENT_KEYWORDS: ["@reviewicorn"],
+      LABELS: ["reviewicorn"],
+      ASSIGNEES: [],
+    });
+  });
+  test("a mention of one route doesn't fire another", () => {
+    const comment = {
+      action: "created",
+      repository: { owner: { login: "dvcrn" } },
+      comment: { body: "@reviewicorn this good now?", user: { login: "dvcrn" } },
+      sender: { login: "dvcrn" },
+    };
+    expect(rawSkipReason("issue_comment", comment, routeFilters(env, "reviewicorn"))).toBeUndefined();
+    expect(rawSkipReason("issue_comment", comment, routeFilters(env, "boticorn"))).toBe("no keyword");
+  });
+  test("routes without an entry, and a malformed ROUTE_FILTERS, get no triggers", () => {
+    expect(routeFilters(env, "other")).toMatchObject(none);
+    expect(routeFilters(env, "toString")).toMatchObject(none);
+    expect(routeFilters({ ...env, ROUTE_FILTERS: undefined }, "boticorn")).toMatchObject(none);
+    expect(routeFilters({ ...env, ROUTE_FILTERS: "nope" }, "boticorn")).toMatchObject(none);
+  });
+});
+
 describe("fetch", () => {
   const secret = "s3cret";
   const env = {
     ALLOWED_OWNERS: ["dvcrn"],
-    COMMENT_KEYWORDS: [],
-    LABELS: [],
-    ASSIGNEES: [],
+    ALLOWED_ACTORS: ["dvcrn"],
+    ROUTE_FILTERS: { foo: { LABELS: ["review"] } },
     IGNORED_SENDERS: [],
     GITHUB_WEBHOOK_SECRET: secret,
     ROUTINES: JSON.stringify({ foo: { url: "https://a/fire", token: "t1" }, bar: { url: "https://b/fire", token: "t2" } }),
@@ -299,13 +339,13 @@ describe("fetch", () => {
     pull_request: { number: 1, head: { repo: { full_name: "dvcrn/zot" } }, base: { repo: { full_name: "dvcrn/zot" } } },
   });
 
-  async function deliver(path: string, e: Env = env): Promise<Response> {
+  async function deliver(path: string, e: Env = env, payload = body): Promise<Response> {
     const key = await crypto.subtle.importKey("raw", bytes(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    const sig = Buffer.from(await crypto.subtle.sign("HMAC", key, bytes(body))).toString("hex");
+    const sig = Buffer.from(await crypto.subtle.sign("HMAC", key, bytes(payload))).toString("hex");
     const req = new Request(`https://bridge.test${path}`, {
       method: "POST",
       headers: { "X-GitHub-Event": "pull_request", "X-Hub-Signature-256": `sha256=${sig}` },
-      body,
+      body: payload,
     });
     return worker.fetch(req, e);
   }
@@ -333,6 +373,21 @@ describe("fetch", () => {
     expect((await deliver("/webhook/baz")).status).toBe(404);
     expect((await deliver("/webhook/toString")).status).toBe(404);
     expect((await deliver("/webhook/foo/extra")).status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  test("applies only the delivered route's triggers", async () => {
+    const labeled = JSON.stringify({
+      action: "labeled",
+      label: { name: "review" },
+      repository: { owner: { login: "dvcrn" } },
+      sender: { login: "dvcrn" },
+    });
+    expect((await deliver("/webhook/foo", env, labeled)).status).toBe(200);
+    expect(fetchMock.mock.calls[0]![0]).toBe("https://a/fire");
+    fetchMock.mockClear();
+    const res = await deliver("/webhook/bar", env, labeled);
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe("skipped: label not watched");
     expect(fetchMock).not.toHaveBeenCalled();
   });
   test("500s when ROUTINES is malformed", async () => {

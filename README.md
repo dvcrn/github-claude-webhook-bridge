@@ -8,7 +8,7 @@ GitHub can't call a Claude routine's fire endpoint directly: the endpoint needs 
 
 ### Create Claude routines
 
-Create one at [claude.ai/code/routines](https://claude.ai/code/routines) for each webhook route you want. The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with `wrangler.jsonc`.
+Create one at [claude.ai/code/routines](https://claude.ai/code/routines) for each webhook route you want. The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with its `ROUTE_FILTERS` entry in `wrangler.jsonc`.
 
 Edit each routine and add an API trigger. Copy the Fire URL, shaped like `https://api.anthropic.com/v1/claude_code/routines/<trigger id>/fire`, and generate a token.
 
@@ -61,16 +61,30 @@ Use `repos/OWNER/REPO/hooks` for a single repository.
 
 ### Set `vars` in `wrangler.jsonc`
 
-These lists are what the Worker actually forwards, on every route. Anything else is dropped.
+These lists are what the Worker actually forwards. Anything else is dropped. They apply on every route:
 
-| Var                | Forwards when                                                     |
-| ------------------ | ----------------------------------------------------------------- |
-| `ALLOWED_OWNERS`   | The repository owner is in the list                               |
-| `ALLOWED_ACTORS`   | The sender (and, for comments, the comment author) is in the list |
-| `COMMENT_KEYWORDS` | An `issue_comment` is created with that word, or an edit adds it  |
-| `LABELS`           | An `issues` or `pull_request` event adds that label               |
-| `ASSIGNEES`        | An `issues` or `pull_request` event assigns that login            |
-| `IGNORED_SENDERS`  | Never. Stops the bot from triggering itself                       |
+| Var               | Forwards when                                                     |
+| ----------------- | ----------------------------------------------------------------- |
+| `ALLOWED_OWNERS`  | The repository owner is in the list                               |
+| `ALLOWED_ACTORS`  | The sender (and, for comments, the comment author) is in the list |
+| `IGNORED_SENDERS` | Never. Stops the bot from triggering itself                       |
+
+`ROUTE_FILTERS` maps each route name to the triggers that fire its routine, so one comment or label only reaches the routes that watch it:
+
+| Key                | Forwards when                                                    |
+| ------------------ | ---------------------------------------------------------------- |
+| `COMMENT_KEYWORDS` | An `issue_comment` is created with that word, or an edit adds it |
+| `LABELS`           | An `issues` or `pull_request` event adds that label              |
+| `ASSIGNEES`        | An `issues` or `pull_request` event assigns that login           |
+
+```jsonc
+"ROUTE_FILTERS": {
+  "boticorn": { "COMMENT_KEYWORDS": ["@boticorn"], "ASSIGNEES": ["boticorn"] },
+  "reviewicorn": { "COMMENT_KEYWORDS": ["@reviewicorn"], "LABELS": ["reviewicorn"] }
+}
+```
+
+A route missing from `ROUTE_FILTERS` only receives opened pull requests.
 
 `wrangler.jsonc` sets `ALLOWED_OWNERS` to `dvcrn`, `digitalvibeshq` and `microfnhq`, and `ALLOWED_ACTORS` to `dvcrn`. A missing list matches nothing. Logins match case-insensitively, and `ALLOWED_ACTORS` entries may start with `@`.
 
@@ -78,8 +92,8 @@ The checks run in this order:
 
 1. Drop repositories whose owner isn't in `ALLOWED_OWNERS`.
 2. Drop senders in `IGNORED_SENDERS` and bots (`sender.type` is `Bot`, or the login ends in `[bot]`).
-3. `issue_comment` `created` or `edited`: forward when both the sender and the comment author are in `ALLOWED_ACTORS` and the body mentions a `COMMENT_KEYWORDS` entry. An edit forwards only if it adds the keyword.
-4. `issues` or `pull_request` `labeled` / `assigned`: forward when the sender is in `ALLOWED_ACTORS` and the label or assignee is watched.
+3. `issue_comment` `created` or `edited`: forward when both the sender and the comment author are in `ALLOWED_ACTORS` and the body mentions one of the route's `COMMENT_KEYWORDS`. An edit forwards only if it adds the keyword.
+4. `issues` or `pull_request` `labeled` / `assigned`: forward when the sender is in `ALLOWED_ACTORS` and the route watches the label or assignee.
 5. `pull_request` `opened`: forward for any author, including drafts and forks.
 6. Drop everything else.
 

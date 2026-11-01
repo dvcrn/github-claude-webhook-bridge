@@ -156,9 +156,11 @@ export function parseRoutines(raw: string | undefined): Record<string, Routine> 
 // Combines the global gates with one route's triggers. A route without an entry gets no triggers.
 export function routeFilters(env: GlobalFilters, route: string): Filters {
   const all = env.ROUTE_FILTERS;
-  const t: RouteTriggers =
-    typeof all === "object" && all !== null && Object.hasOwn(all, route) ? (all as Record<string, RouteTriggers>)[route] ?? {} : {};
-  return { ...env, COMMENT_KEYWORDS: t.COMMENT_KEYWORDS ?? [], LABELS: t.LABELS ?? [], ASSIGNEES: t.ASSIGNEES ?? [] };
+  const entry =
+    typeof all === "object" && all !== null && Object.hasOwn(all, route)
+      ? (all as Record<string, RouteTriggers | null | undefined>)[route]
+      : undefined;
+  return { ...env, COMMENT_KEYWORDS: entry?.COMMENT_KEYWORDS ?? [], LABELS: entry?.LABELS ?? [], ASSIGNEES: entry?.ASSIGNEES ?? [] };
 }
 
 function parsePayload(raw: Uint8Array): WebhookPayload | undefined {

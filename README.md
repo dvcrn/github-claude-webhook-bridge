@@ -8,7 +8,7 @@ GitHub can't call a Claude routine's fire endpoint directly: the endpoint needs 
 
 ### Create Claude routines
 
-Create one at [claude.ai/code/routines](https://claude.ai/code/routines) for each webhook route you want. The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with its `ROUTE_FILTERS` entry in `wrangler.jsonc`.
+Create one at [claude.ai/code/routines](https://claude.ai/code/routines) for each webhook route you want. The UI may call it a scheduled task. The prompt is what the run does; this Worker only decides whether to fire it. Keep the prompt's keywords, labels, and assignees in sync with the route's `ROUTE_FILTERS` entry in `wrangler.jsonc`.
 
 Edit each routine and add an API trigger. Copy the Fire URL, shaped like `https://api.anthropic.com/v1/claude_code/routines/<trigger id>/fire`, and generate a token.
 
@@ -61,7 +61,7 @@ Use `repos/OWNER/REPO/hooks` for a single repository.
 
 ### Set `vars` in `wrangler.jsonc`
 
-These lists are what the Worker actually forwards. Anything else is dropped. They apply on every route:
+These lists gate every route. Anything they reject is dropped:
 
 | Var               | Forwards when                                                     |
 | ----------------- | ----------------------------------------------------------------- |

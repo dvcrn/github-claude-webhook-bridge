@@ -9,6 +9,10 @@ export interface Filters {
   IGNORED_SENDERS: readonly string[];
 }
 
+// The comment keywords, labels and assignees that fire one route's routine.
+export type RouteTriggers = Partial<Pick<Filters, "COMMENT_KEYWORDS" | "LABELS" | "ASSIGNEES">>;
+type GlobalFilters = Omit<Filters, keyof RouteTriggers> & { ROUTE_FILTERS?: unknown };
+
 // Only the payload fields this worker reads; GitHub sends many more.
 interface User {
   login?: string;
@@ -103,7 +107,7 @@ export default {
     const payload = parsePayload(raw);
     if (!payload) return new Response("expected a JSON object payload", { status: 400 });
 
-    const skip = skipReason(event, payload, env);
+    const skip = skipReason(event, payload, routeFilters(env, route));
     if (skip) {
       log("skipped", { route, event, delivery, action: payload.action, reason: skip });
       return new Response(`skipped: ${skip}`, { status: 202 });
@@ -147,6 +151,16 @@ export function parseRoutines(raw: string | undefined): Record<string, Routine> 
     if (typeof r?.url !== "string" || typeof r?.token !== "string") return undefined;
   }
   return value as Record<string, Routine>;
+}
+
+// Combines the global gates with one route's triggers. A route without an entry gets no triggers.
+export function routeFilters(env: GlobalFilters, route: string): Filters {
+  const all = env.ROUTE_FILTERS;
+  const entry =
+    typeof all === "object" && all !== null && Object.hasOwn(all, route)
+      ? (all as Record<string, RouteTriggers | null | undefined>)[route]
+      : undefined;
+  return { ...env, COMMENT_KEYWORDS: entry?.COMMENT_KEYWORDS ?? [], LABELS: entry?.LABELS ?? [], ASSIGNEES: entry?.ASSIGNEES ?? [] };
 }
 
 function parsePayload(raw: Uint8Array): WebhookPayload | undefined {
